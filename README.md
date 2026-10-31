@@ -17,6 +17,14 @@
 
 ---
 
+
+---
+## การรัน
+composer install
+php artisan key:generate
+php artisan migrate:fresh --seed
+php artisan test
+---
 ## 1. สิ่งที่เตรียมไว้ให้ในโครงสร้างนี้
 
 - **Database Migrations ครบ 20 ตาราง**: ตาม §6.2 ของ Spec (`branches`, `users`, `user_devices`, `attendances`, `attendance_attempts`, `products`, `product_variants`, `stock_levels`, `stock_movements`, `stock_counts`, `stock_count_items`, `checklist_templates`, `checklist_template_items`, `checklist_submissions`, `checklist_submission_items`, `media`, `daily_closings`, `app_notifications`, `settings`, `personal_access_tokens`)
