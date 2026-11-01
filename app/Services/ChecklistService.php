@@ -10,12 +10,18 @@ use App\Models\Media;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class ChecklistService
 {
+    public function __construct(
+        protected ImageService $imageService
+    ) {}
+
     /**
-     * ดึงรายการส่งเช็คลิสต์วันนี้ (สร้าง Draft จาก Template หากยังไม่มี)
+     * ดึงรายการเช็คลิสต์วันนี้ (สร้าง Draft จาก Template หากยังไม่มี)
+     * (§5.5, §5.6: 1 สาขา 1 รายการต่อแม่แบบ/วัน)
      */
     public function getTodaySubmissions(int $branchId, User $user): Collection
     {
@@ -43,7 +49,7 @@ class ChecklistService
                         'template_item_id' => $tplItem->id,
                     ],
                     [
-                        'is_ok' => true,
+                        'is_ok' => false,
                     ]
                 );
             }
@@ -57,8 +63,16 @@ class ChecklistService
     /**
      * บันทึกคำตอบเช็คลิสต์รายข้อ
      */
-    public function updateSubmissionItem(int $submissionId, int $itemId, bool $isOk, ?string $note): ChecklistSubmissionItem
+    public function updateSubmissionItem(int $submissionId, int $itemId, bool $isOk, ?string $note, User $user): ChecklistSubmissionItem
     {
+        $submission = ChecklistSubmission::findOrFail($submissionId);
+
+        if ($submission->status === ChecklistStatus::SUBMITTED || $submission->status === ChecklistStatus::APPROVED) {
+            throw ValidationException::withMessages([
+                'checklist' => ['เช็คลิสต์นี้ถูกส่งไปแล้ว ไม่สามารถแก้ไขคำตอบได้'],
+            ]);
+        }
+
         $item = ChecklistSubmissionItem::where('submission_id', $submissionId)
             ->where('id', $itemId)
             ->firstOrFail();
@@ -68,46 +82,78 @@ class ChecklistService
             'note' => $note,
         ]);
 
-        return $item;
+        return $item->load(['templateItem', 'photos']);
     }
 
     /**
-     * แนบรูปภาพเช็คลิสต์
+     * แนบและบีบอัดรูปภาพเช็คลิสต์ (แปลงเป็น WebP q=70 และสร้าง Thumbnail) (§5.6)
      */
     public function attachPhoto(int $submissionId, int $itemId, UploadedFile $file, User $user): Media
     {
+        $submission = ChecklistSubmission::findOrFail($submissionId);
+
+        if ($submission->status === ChecklistStatus::SUBMITTED || $submission->status === ChecklistStatus::APPROVED) {
+            throw ValidationException::withMessages([
+                'checklist' => ['เช็คลิสต์นี้ถูกส่งไปแล้ว ไม่สามารถแนบรูปเพิ่มได้'],
+            ]);
+        }
+
         $item = ChecklistSubmissionItem::where('submission_id', $submissionId)
             ->where('id', $itemId)
             ->firstOrFail();
 
-        $path = $file->store('checklists/' . now()->format('Y/m/d'), 'local');
+        return $this->imageService->storeAndCompress($file, $item, $user);
+    }
 
-        return $item->photos()->create([
-            'disk' => 'local',
-            'path' => $path,
-            'mime' => $file->getClientMimeType(),
-            'size_bytes' => $file->getSize(),
-            'created_by' => $user->id,
-            'expires_at' => now()->addDays(60),
-            'is_pinned' => false,
-            'created_at' => now(),
-        ]);
+    /**
+     * ลบรูปภาพที่แนบไว้ในข้อตรวจเช็ค
+     */
+    public function deletePhoto(int $submissionId, int $itemId, int $mediaId, User $user): bool
+    {
+        $submission = ChecklistSubmission::findOrFail($submissionId);
+
+        if ($submission->status === ChecklistStatus::SUBMITTED || $submission->status === ChecklistStatus::APPROVED) {
+            throw ValidationException::withMessages([
+                'checklist' => ['เช็คลิสต์นี้ถูกส่งไปแล้ว ไม่สามารถลบรูปได้'],
+            ]);
+        }
+
+        $item = ChecklistSubmissionItem::where('submission_id', $submissionId)
+            ->where('id', $itemId)
+            ->firstOrFail();
+
+        $photo = $item->photos()->where('id', $mediaId)->firstOrFail();
+
+        if (Storage::disk($photo->disk)->exists($photo->path)) {
+            Storage::disk($photo->disk)->delete($photo->path);
+        }
+        if ($photo->thumb_path && Storage::disk($photo->disk)->exists($photo->thumb_path)) {
+            Storage::disk($photo->disk)->delete($photo->thumb_path);
+        }
+
+        return (bool) $photo->delete();
     }
 
     /**
      * ส่งผลการตรวจเช็คลิสต์
+     * (§5.6: ตรวจสอบรูปภาพครบทุกข้อที่ require_photo = true)
      */
     public function submit(int $submissionId, User $user): ChecklistSubmission
     {
-        $submission = ChecklistSubmission::withoutGlobalScopes()
-            ->with(['items.templateItem', 'items.photos'])
+        $submission = ChecklistSubmission::with(['items.templateItem', 'items.photos'])
             ->findOrFail($submissionId);
 
-        // ตรวจสอบว่าข้อที่บังคับรูป มีรูปถ่ายครบหรือยัง (§5.6)
+        if ($submission->status === ChecklistStatus::SUBMITTED || $submission->status === ChecklistStatus::APPROVED) {
+            throw ValidationException::withMessages([
+                'checklist' => ['เช็คลิสต์นี้ได้ทำการส่งไปเรียบร้อยแล้ว'],
+            ]);
+        }
+
+        // ตรวจสอบว่าข้อที่กำหนด require_photo = true มีการแนบรูปภาพอย่างน้อย 1 รูป (§5.6)
         foreach ($submission->items as $item) {
             if ($item->templateItem->require_photo && $item->photos->isEmpty()) {
                 throw ValidationException::withMessages([
-                    'photo' => ["ข้อ '{$item->templateItem->label}' ต้องทำการแนบรูปถ่ายประกอบ"],
+                    'photo' => ["ข้อ '{$item->templateItem->label}' ต้องทำการแนบรูปถ่ายประกอบก่อนส่ง"],
                 ]);
             }
         }
@@ -118,6 +164,41 @@ class ChecklistService
             'submitted_at' => now(),
         ]);
 
-        return $submission;
+        return $submission->fresh(['template', 'items.templateItem', 'items.photos', 'submitter']);
+    }
+
+    /**
+     * แอดมินอนุมัติผลการตรวจเช็คลิสต์ (§7.2)
+     */
+    public function approve(int $submissionId, User $reviewer, ?int $score = null, ?string $reviewNote = null): ChecklistSubmission
+    {
+        $submission = ChecklistSubmission::withoutGlobalScopes()->findOrFail($submissionId);
+
+        $submission->update([
+            'status' => ChecklistStatus::APPROVED,
+            'score' => $score,
+            'reviewed_by' => $reviewer->id,
+            'reviewed_at' => now(),
+            'review_note' => $reviewNote,
+        ]);
+
+        return $submission->fresh(['template', 'items.templateItem', 'items.photos', 'reviewer']);
+    }
+
+    /**
+     * แอดมินตีกลับเช็คลิสต์ให้แก้ไข (§5.7, §7.2)
+     */
+    public function reject(int $submissionId, User $reviewer, string $reviewNote): ChecklistSubmission
+    {
+        $submission = ChecklistSubmission::withoutGlobalScopes()->findOrFail($submissionId);
+
+        $submission->update([
+            'status' => ChecklistStatus::REJECTED,
+            'reviewed_by' => $reviewer->id,
+            'reviewed_at' => now(),
+            'review_note' => $reviewNote,
+        ]);
+
+        return $submission->fresh(['template', 'items.templateItem', 'items.photos', 'reviewer']);
     }
 }

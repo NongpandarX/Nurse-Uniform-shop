@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\Branch;
+use App\Models\Setting;
 use App\Services\GeofenceService;
 use Closure;
 use Illuminate\Http\Request;
@@ -20,6 +21,18 @@ class EnsureWithinGeofence
     public function handle(Request $request, Closure $next): Response
     {
         $user = $request->user();
+
+        // ตรวจสอบการตั้งค่า settings ของระบบสำหรับแต่ละกิจกรรม (§4)
+        if (str_contains($request->path(), 'stock-counts') && !Setting::get('geofence_required_for_count', true)) {
+            return $next($request);
+        }
+        if (str_contains($request->path(), 'checklists') && !Setting::get('geofence_required_for_checklist', true)) {
+            return $next($request);
+        }
+        if (str_contains($request->path(), 'closing') && !Setting::get('geofence_required_for_closing', true)) {
+            return $next($request);
+        }
+
         $branch = $user?->branch ?? Branch::find($request->input('branch_id'));
 
         $lat = (float) $request->input('lat', 0);

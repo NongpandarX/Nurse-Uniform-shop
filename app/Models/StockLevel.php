@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Traits\BranchScoped;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -53,5 +54,37 @@ class StockLevel extends Model
     public function isOutOfStock(): bool
     {
         return $this->qty <= 0;
+    }
+
+    /**
+     * ชื่อสินค้าพร้อมรายละเอียดของรายการสต็อกนี้
+     */
+    public function getItemNameAttribute(): string
+    {
+        return $this->variant?->full_name ?? 'สินค้า';
+    }
+
+    /**
+     * Scope สำหรับสินค้าที่ใกล้หมด (0 < qty <= min_qty)
+     */
+    public function scopeLowStock(Builder $query): Builder
+    {
+        return $query->where('qty', '>', 0)->whereColumn('qty', '<=', 'min_qty');
+    }
+
+    /**
+     * Scope สำหรับสินค้าหมดสต็อก (qty <= 0)
+     */
+    public function scopeOutOfStock(Builder $query): Builder
+    {
+        return $query->where('qty', '<=', 0);
+    }
+
+    /**
+     * Scope สำหรับสินค้าที่ต้องเติมของ (qty <= min_qty)
+     */
+    public function scopeNeedsRestock(Builder $query): Builder
+    {
+        return $query->whereColumn('qty', '<=', 'min_qty');
     }
 }

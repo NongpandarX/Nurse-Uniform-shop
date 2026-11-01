@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\ChecklistStatus;
 use App\Enums\ChecklistType;
 use App\Events\ShopClosed;
 use App\Models\Attendance;
@@ -15,7 +16,7 @@ use Illuminate\Validation\ValidationException;
 class ClosingService
 {
     /**
-     * ตรวจความพร้อมในการปิดร้าน
+     * ตรวจความพร้อมในการปิดร้าน (§5.5)
      */
     public function checkReadiness(int $branchId): array
     {
@@ -23,26 +24,48 @@ class ClosingService
 
         $stockCount = StockCount::withoutGlobalScopes()
             ->where('branch_id', $branchId)
-            ->where('count_date', $today)
+            ->whereDate('count_date', $today)
             ->where('status', 'submitted')
             ->first();
 
         $closingChecklist = ChecklistSubmission::withoutGlobalScopes()
             ->where('branch_id', $branchId)
-            ->where('check_date', $today)
-            ->where('status', '!=', 'draft')
+            ->whereDate('check_date', $today)
+            ->whereIn('status', [ChecklistStatus::SUBMITTED, ChecklistStatus::APPROVED])
             ->whereHas('template', fn($q) => $q->where('type', ChecklistType::CLOSING))
             ->first();
 
+        $existingClosing = DailyClosing::withoutGlobalScopes()
+            ->where('branch_id', $branchId)
+            ->whereDate('closing_date', $today)
+            ->first();
+
+        $lowStockCount = StockLevel::withoutGlobalScopes()
+            ->where('branch_id', $branchId)
+            ->whereColumn('qty', '<=', 'min_qty')
+            ->count();
+
+        $staffPresent = Attendance::withoutGlobalScopes()
+            ->where('branch_id', $branchId)
+            ->whereDate('work_date', $today)
+            ->whereNotNull('check_in_at')
+            ->count();
+
         return [
+            'is_closed' => !empty($existingClosing),
+            'closing' => $existingClosing,
             'has_submitted_stock_count' => !empty($stockCount),
             'has_submitted_closing_checklist' => !empty($closingChecklist),
             'can_close' => !empty($stockCount) && !empty($closingChecklist),
+            'stock_count_id' => $stockCount?->id,
+            'closing_submission_id' => $closingChecklist?->id,
+            'low_stock_count' => $lowStockCount,
+            'staff_present' => $staffPresent,
         ];
     }
 
     /**
-     * ดำเนินการแจ้งปิดร้านประจำวัน
+     * ดำเนินการแจ้งปิดร้านประจำวัน (§5.5)
      */
     public function closeShop(int $branchId, User $user, ?string $note = null): DailyClosing
     {
@@ -51,24 +74,24 @@ class ClosingService
 
         if (!$readiness['has_submitted_stock_count']) {
             throw ValidationException::withMessages([
-                'closing' => ['ต้องทำการส่งผลการนับสต็อกประจำวันก่อนแจ้งปิดร้าน'],
+                'stock_count' => ['ต้องทำการส่งผลการนับสต็อกประจำวันก่อนแจ้งปิดร้าน'],
             ]);
         }
 
         if (!$readiness['has_submitted_closing_checklist']) {
             throw ValidationException::withMessages([
-                'closing' => ['ต้องทำการส่งเช็คลิสต์ปิดร้านก่อนแจ้งปิดร้าน'],
+                'closing_checklist' => ['ต้องทำการส่งเช็คลิสต์ปิดร้านก่อนแจ้งปิดร้าน'],
             ]);
         }
 
         $stockCount = StockCount::withoutGlobalScopes()
             ->where('branch_id', $branchId)
-            ->where('count_date', $today)
+            ->whereDate('count_date', $today)
             ->first();
 
         $closingSubmission = ChecklistSubmission::withoutGlobalScopes()
             ->where('branch_id', $branchId)
-            ->where('check_date', $today)
+            ->whereDate('check_date', $today)
             ->whereHas('template', fn($q) => $q->where('type', ChecklistType::CLOSING))
             ->first();
 
@@ -79,7 +102,7 @@ class ClosingService
 
         $staffPresent = Attendance::withoutGlobalScopes()
             ->where('branch_id', $branchId)
-            ->where('work_date', $today)
+            ->whereDate('work_date', $today)
             ->whereNotNull('check_in_at')
             ->count();
 

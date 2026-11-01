@@ -25,7 +25,7 @@ class StockCount extends Model
     ];
 
     protected $casts = [
-        'count_date' => 'date',
+        'count_date' => 'date:Y-m-d',
         'revision' => 'integer',
         'submitted_at' => 'datetime',
     ];

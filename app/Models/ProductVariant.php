@@ -46,4 +46,28 @@ class ProductVariant extends Model
     {
         return $this->hasMany(StockCountItem::class, 'variant_id');
     }
+
+    /**
+     * ชื่อสินค้าแบบสมบูรณ์พร้อมตัวเลือกและไซส์
+     * เช่น "กรุงเทพ ยาว (SSS)", "กางเกง (normal S)", "เข็มขัด"
+     */
+    public function getFullNameAttribute(): string
+    {
+        $name = $this->product?->name ?? 'สินค้า';
+        $details = [];
+
+        if ($this->option) {
+            $details[] = $this->option;
+        }
+
+        if ($this->size) {
+            $details[] = $this->size->value ?? (string) $this->size;
+        }
+
+        if (!empty($details)) {
+            $name .= ' (' . implode(' ', $details) . ')';
+        }
+
+        return $name;
+    }
 }

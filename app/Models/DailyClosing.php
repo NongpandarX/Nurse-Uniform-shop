@@ -24,7 +24,7 @@ class DailyClosing extends Model
     ];
 
     protected $casts = [
-        'closing_date' => 'date',
+        'closing_date' => 'date:Y-m-d',
         'closed_at' => 'datetime',
         'low_stock_count' => 'integer',
         'staff_present' => 'integer',

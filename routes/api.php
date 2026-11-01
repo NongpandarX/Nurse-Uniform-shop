@@ -58,11 +58,13 @@ Route::prefix('v1')->group(function () {
             Route::put('/stock-counts/{id}/items/{variantId}', [StockCountController::class, 'updateItem']);
             Route::post('/stock-counts/{id}/confirm-row', [StockCountController::class, 'confirmRow']);
             Route::post('/stock-counts/{id}/submit', [StockCountController::class, 'submit'])->middleware('geofence');
+            Route::post('/stock-counts/{id}/reopen', [StockCountController::class, 'reopen']);
 
             // Daily Checklist (เช็คลิสต์เปิด/ปิด/ความสะอาด)
             Route::get('/checklists/today', [ChecklistController::class, 'todayChecklists']);
             Route::put('/checklists/{id}/items/{itemId}', [ChecklistController::class, 'updateItem']);
             Route::post('/checklists/{id}/items/{itemId}/photos', [ChecklistController::class, 'uploadPhoto']);
+            Route::delete('/checklists/{id}/items/{itemId}/photos/{mediaId}', [ChecklistController::class, 'deletePhoto']);
             Route::post('/checklists/{id}/submit', [ChecklistController::class, 'submit'])->middleware('geofence');
 
             // Daily Closing (แจ้งปิดร้าน)

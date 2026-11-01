@@ -27,7 +27,7 @@ class ChecklistSubmission extends Model
     ];
 
     protected $casts = [
-        'check_date' => 'date',
+        'check_date' => 'date:Y-m-d',
         'submitted_at' => 'datetime',
         'reviewed_at' => 'datetime',
         'status' => ChecklistStatus::class,

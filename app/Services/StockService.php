@@ -25,13 +25,14 @@ class StockService
         int $newQty,
         StockReason $reason,
         ?Model $ref = null,
-        ?string $note = null
+        ?string $note = null,
+        ?int $userId = null
     ): StockLevel {
         if ($newQty < 0) {
             throw new InvalidArgumentException('จำนวนสินค้าคงเหลือไม่สามารถติดลบได้');
         }
 
-        return DB::transaction(function () use ($branchId, $variantId, $newQty, $reason, $ref, $note) {
+        return DB::transaction(function () use ($branchId, $variantId, $newQty, $reason, $ref, $note, $userId) {
             $lv = StockLevel::withoutGlobalScopes()
                 ->where('branch_id', $branchId)
                 ->where('variant_id', $variantId)
@@ -54,13 +55,18 @@ class StockService
                 'qty_after' => $newQty,
                 'ref_type' => $ref ? get_class($ref) : null,
                 'ref_id' => $ref?->getKey(),
-                'user_id' => auth()->id(),
+                'user_id' => $userId ?? auth()->id(),
                 'note' => $note,
                 'created_at' => now(),
             ]);
 
             // อัปเดต stock level
-            $lv->update(['qty' => $newQty]);
+            $updateData = ['qty' => $newQty];
+            if ($reason === StockReason::COUNT) {
+                $updateData['last_counted_at'] = now();
+                $updateData['last_counted_by'] = $userId ?? auth()->id();
+            }
+            $lv->update($updateData);
 
             // 1. ตรวจสอบการลดลงผิดปกติ (≥ abnormal_drop_qty หรือ ≥ abnormal_drop_percent%)
             $abnormalDropQty = (int) Setting::get('abnormal_drop_qty', 10);
@@ -73,7 +79,10 @@ class StockService
 
             // 2. ตรวจสอบหมดสต็อก (qty = 0)
             if ($newQty === 0 && !$lv->out_of_stock_alerted_at) {
-                $lv->update(['out_of_stock_alerted_at' => now()]);
+                $lv->update([
+                    'out_of_stock_alerted_at' => now(),
+                    'low_stock_alerted_at' => null,
+                ]);
                 event(new OutOfStockDetected($lv));
             } elseif ($newQty > 0 && $lv->out_of_stock_alerted_at) {
                 $lv->update(['out_of_stock_alerted_at' => null]);
